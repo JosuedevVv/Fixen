@@ -11,6 +11,9 @@ Decide el nivel de riesgo final con sesgo escéptico (ante la duda, sube).
 ### `getHighestSeverity(annotations)`
 Recorre las anotaciones y devuelve la severidad más alta (`LOW < MEDIUM < HIGH`). Devuelve `null` si no hay anotaciones.
 
+### `compareBySeverity(a, b)`
+Comparador para `Array.sort`: ordena de menor a mayor severidad (`LOW`, `MEDIUM`, `HIGH`). Lo usa `CanvasImageAnnotatorService` para pintar `HIGH` al final y que quede encima (ver Doc 03b).
+
 ### `containsCriticalHazard(text)`
 Revisa el texto contra una lista de disparadores (`CRITICAL_HAZARD_TRIGGERS`). Cada disparador es una lista de patrones que deben aparecer **todos** juntos:
 

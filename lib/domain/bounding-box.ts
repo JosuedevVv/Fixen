@@ -20,7 +20,17 @@ function clampToScale(value: number): number {
   return Math.min(NORMALIZED_SCALE, Math.max(0, value));
 }
 
-/** Ordena [min, max] y los expande simétricamente hasta el tamaño mínimo visible. */
+/**
+ * Sanea UN eje (X o Y) de un recuadro: devuelve [min, max] ordenado, dentro de
+ * [0, 1000] y con al menos `MIN_NORMALIZED_BOX_SIZE` de longitud.
+ *
+ * Pasos:
+ * 1. Clamping y orden: tolera valores fuera de rango, NaN y ejes invertidos.
+ * 2. Si el tramo es más corto que el mínimo, se expande a partes iguales
+ *    hacia ambos lados (el centro del recuadro se conserva).
+ * 3. Si al expandir se sale del rango, se DESPLAZA el tramo (no se recorta)
+ *    para mantener el tamaño mínimo. Ej.: [995, 995] -> [980, 1000].
+ */
 function normalizeAxis(a: number, b: number): [number, number] {
   let min = Math.min(clampToScale(a), clampToScale(b));
   let max = Math.max(clampToScale(a), clampToScale(b));
@@ -41,7 +51,11 @@ function normalizeAxis(a: number, b: number): [number, number] {
   return [min, max];
 }
 
-/** Aplica clamping, corrige inversiones y garantiza un tamaño mínimo visible. */
+/**
+ * Deja un recuadro del modelo en un estado seguro para dibujar:
+ * valores dentro de [0, 1000], ejes ordenados y tamaño mínimo visible.
+ * No muta la entrada. Es idempotente: sanear dos veces da el mismo resultado.
+ */
 export function sanitizeNormalizedBox(
   box: NormalizedBoundingBox,
 ): NormalizedBoundingBox {
@@ -50,7 +64,16 @@ export function sanitizeNormalizedBox(
   return { ymin, xmin, ymax, xmax };
 }
 
-/** Convierte un recuadro normalizado a píxeles de la imagen nativa. */
+/**
+ * Convierte un recuadro normalizado [0, 1000] a píxeles de la imagen nativa.
+ * Sanea primero, así que es seguro llamarla con la salida cruda del modelo.
+ *
+ * x = xmin/1000 * naturalWidth     width  = (xmax-xmin)/1000 * naturalWidth
+ * y = ymin/1000 * naturalHeight    height = (ymax-ymin)/1000 * naturalHeight
+ *
+ * @param naturalWidth  Ancho real de la imagen (no el mostrado en pantalla).
+ * @param naturalHeight Alto real de la imagen (no el mostrado en pantalla).
+ */
 export function toPixelRect(
   box: NormalizedBoundingBox,
   naturalWidth: number,
