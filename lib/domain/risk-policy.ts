@@ -10,7 +10,11 @@ import type {
 
 const RISK_RANK: Record<RiskLevel, number> = { LOW: 0, MEDIUM: 1, HIGH: 2 };
 
-/** Un disparador se activa cuando TODOS sus patrones aparecen en el texto. */
+/**
+ * Un disparador se activa cuando TODOS sus patrones aparecen en el texto.
+ * Exigir varios patrones a la vez (ej. agua Y enchufe) reduce falsos positivos
+ * frente a buscar cada palabra por separado.
+ */
 type HazardTrigger = readonly RegExp[];
 
 const WATER = /agua|fuga|filtraci[oó]n|humedad|goteo|goteando|mojad|inunda/i;
@@ -31,6 +35,14 @@ const CRITICAL_HAZARD_TRIGGERS: readonly HazardTrigger[] = [
   [/tuber[ií]a (matriz|principal)|llave de paso (general|rota)/i, /rot[ao]|revent|no (se )?puede cerrar/i],
 ];
 
+/** Comparador ascendente por severidad (LOW primero, HIGH al final). */
+export function compareBySeverity(
+  a: Pick<FaultAnnotation, "severity">,
+  b: Pick<FaultAnnotation, "severity">,
+): number {
+  return RISK_RANK[a.severity] - RISK_RANK[b.severity];
+}
+
 /** Devuelve la severidad más alta de la lista, o null si no hay anotaciones. */
 export function getHighestSeverity(
   annotations: readonly FaultAnnotation[],
@@ -44,7 +56,11 @@ export function getHighestSeverity(
   return highest;
 }
 
-/** Indica si el texto contiene algún patrón de peligro crítico. */
+/**
+ * Indica si el texto activa al menos un disparador de peligro crítico.
+ * Lógica: OR entre disparadores (`some`) y AND dentro de cada uno (`every`).
+ * No distingue mayúsculas y solo cubre español.
+ */
 export function containsCriticalHazard(text: string): boolean {
   return CRITICAL_HAZARD_TRIGGERS.some((trigger) =>
     trigger.every((pattern) => pattern.test(text)),
@@ -58,9 +74,14 @@ interface ResolveRiskInput {
 }
 
 /**
- * Calcula el riesgo final aplicando el sesgo escéptico:
- * el resultado nunca es menor que lo declarado, y sube a HIGH si
- * una anotación es HIGH o el texto contiene un peligro crítico.
+ * Calcula el riesgo final aplicando el sesgo escéptico.
+ * Solo puede SUBIR el riesgo declarado por el modelo, nunca bajarlo:
+ * 1. Alguna anotación HIGH          -> HIGH
+ * 2. Texto con peligro crítico      -> HIGH
+ * 3. En otro caso                   -> el riesgo declarado
+ *
+ * `textsToScan` se une con saltos de línea para que un patrón no se forme
+ * accidentalmente cruzando el final de un texto con el inicio de otro.
  */
 export function resolveRiskLevel({
   declaredRisk,
