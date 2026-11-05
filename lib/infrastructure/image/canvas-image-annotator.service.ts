@@ -1,12 +1,12 @@
 /**
- * Pintor de recuadros sobre la imagen (Spec 03, secciones 2 y 3).
- * Implementa ImageAnnotatorPort con HTML5 canvas. SOLO CLIENTE: usa `Image` y `document`.
+ * Pintor de marcadores de alta precisión sobre la fotografía (Spec 03).
+ * Implementa el patrón de inversión visual: pines circulares en negro carbón sólido (#0F172A)
+ * con número blanco brillante, anillo exterior de luz y pastilla de etiqueta contrastante.
  */
 
 import type { FaultAnnotation } from "../../contracts/diagnosis.contract";
 import type { ImageAnnotatorPort } from "../../ports/image-annotator.port";
 import {
-  buildLabelText,
   computeFontSize,
   computeLabelHeight,
   computeLabelPosition,
@@ -20,35 +20,12 @@ import {
   SEVERITY_PALETTE,
   type SeverityColors,
 } from "../../domain/severity-palette";
+import { loadImage } from "./load-image";
 
 const OUTPUT_MIME_TYPE = "image/png";
-const CORNER_BRACKET_RATIO = 0.25;
-const LABEL_HORIZONTAL_PADDING_RATIO = 0.6;
-const LABEL_FONT_FAMILY = 'ui-monospace, "Geist Mono", Menlo, monospace';
+const BOX_CORNER_RADIUS_PX = 14;
+const LABEL_FONT_FAMILY = 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 
-/**
- * Decodifica una imagen a partir de un Data URL o URL.
- * Se espera a `onload` porque `naturalWidth/naturalHeight` solo son válidos
- * una vez decodificada; antes valen 0.
- *
- * @throws Error si el navegador no puede decodificar la fuente.
- */
-function loadImage(source: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error("No se pudo cargar la imagen."));
-    image.src = source;
-  });
-}
-
-/**
- * Crea un canvas fuera del DOM con el tamaño EXACTO de la imagen original.
- * Trabajar a resolución nativa (1:1) evita pérdida de nitidez: los recuadros
- * se queman en los píxeles reales, no en una versión escalada.
- *
- * @throws Error si el navegador no soporta Canvas 2D.
- */
 function createContext(width: number, height: number): CanvasRenderingContext2D {
   const canvas = document.createElement("canvas");
   canvas.width = width;
@@ -58,83 +35,31 @@ function createContext(width: number, height: number): CanvasRenderingContext2D 
   return context;
 }
 
-/** Pinta el relleno translúcido que resalta la zona de la falla sin ocultarla. */
-function drawBoxFill(
-  context: CanvasRenderingContext2D,
-  rect: PixelRect,
-  colors: SeverityColors,
-): void {
-  context.fillStyle = colors.fill;
-  context.fillRect(rect.x, rect.y, rect.width, rect.height);
-}
-
-/**
- * Dibuja el borde del recuadro en dos pasadas:
- * 1. Contorno oscuro 2 px más grueso (aporta contraste sobre fondos claros).
- * 2. Trazo del color de severidad encima.
- * Así el recuadro se lee igual sobre una pared blanca que sobre una tubería oscura.
- */
-function drawBoxStroke(
+function drawSubtleRoundedRegion(
   context: CanvasRenderingContext2D,
   rect: PixelRect,
   colors: SeverityColors,
   lineWidth: number,
 ): void {
+  const radius = Math.min(BOX_CORNER_RADIUS_PX, rect.width / 4, rect.height / 4);
+
+  context.save();
+  context.beginPath();
+  context.roundRect(rect.x, rect.y, rect.width, rect.height, radius);
+  context.fillStyle = colors.fill;
+  context.fill();
+
   context.strokeStyle = ANNOTATION_OUTLINE_COLOR;
   context.lineWidth = lineWidth + 2;
-  context.strokeRect(rect.x, rect.y, rect.width, rect.height);
+  context.stroke();
 
   context.strokeStyle = colors.stroke;
   context.lineWidth = lineWidth;
-  context.strokeRect(rect.x, rect.y, rect.width, rect.height);
+  context.stroke();
+  context.restore();
 }
 
-/**
- * Refuerza las cuatro esquinas con "corchetes" de trazo doble.
- *
- * Cada esquina se define como [cx, cy, dx, dy]: su posición y la dirección
- * (+1/-1) en la que apuntan sus dos brazos hacia el interior del recuadro.
- * Cada corchete es una polilínea de tres puntos:
- *   brazo horizontal -> vértice -> brazo vertical.
- * La longitud del brazo es el 25 % del lado menor, para que en recuadros
- * pequeños los corchetes no se solapen.
- */
-function drawCornerBrackets(
-  context: CanvasRenderingContext2D,
-  rect: PixelRect,
-  colors: SeverityColors,
-  lineWidth: number,
-): void {
-  const length = Math.min(rect.width, rect.height) * CORNER_BRACKET_RATIO;
-  const { x, y, width, height } = rect;
-  const corners: Array<[number, number, number, number]> = [
-    [x, y, 1, 1],
-    [x + width, y, -1, 1],
-    [x, y + height, 1, -1],
-    [x + width, y + height, -1, -1],
-  ];
-
-  context.strokeStyle = colors.stroke;
-  context.lineWidth = lineWidth * 2;
-  context.lineCap = "square";
-  for (const [cx, cy, dx, dy] of corners) {
-    context.beginPath();
-    context.moveTo(cx + dx * length, cy);
-    context.lineTo(cx, cy);
-    context.lineTo(cx, cy + dy * length);
-    context.stroke();
-  }
-}
-
-/**
- * Dibuja la pastilla "#N · label" asociada a un recuadro.
- *
- * El orden importa: hay que fijar `context.font` ANTES de `measureText`,
- * porque el ancho de la pastilla depende de la fuente. Después se calcula
- * dónde colocarla (ver `computeLabelPosition`), se pinta el fondo del color
- * de severidad y, encima, el texto centrado verticalmente.
- */
-function drawLabelPill(
+function drawNumberedPinAndLabel(
   context: CanvasRenderingContext2D,
   annotation: FaultAnnotation,
   rect: PixelRect,
@@ -143,33 +68,70 @@ function drawLabelPill(
   imageHeight: number,
 ): void {
   const fontSize = computeFontSize(imageWidth, imageHeight);
-  const labelHeight = computeLabelHeight(fontSize);
-  context.font = `700 ${fontSize}px ${LABEL_FONT_FAMILY}`;
+  const pillHeight = computeLabelHeight(fontSize);
+  const pinRadius = Math.round(pillHeight * 0.54);
 
-  const text = buildLabelText(annotation);
-  const padding = fontSize * LABEL_HORIZONTAL_PADDING_RATIO;
-  const labelWidth = context.measureText(text).width + padding * 2;
+  context.save();
+  context.font = `600 ${fontSize}px ${LABEL_FONT_FAMILY}`;
+
+  const labelText = annotation.label.slice(0, 42);
+  const textWidth = context.measureText(labelText).width;
+  const totalWidth = pinRadius * 2 + textWidth + fontSize * 1.3;
+
   const position = computeLabelPosition(
     rect,
-    labelWidth,
-    labelHeight,
+    totalWidth,
+    pillHeight,
     imageWidth,
     imageHeight,
   );
 
+  // Pastilla en negro carbón sólido (#0F172A) con texto blanco brillante
+  const pillX = position.x + pinRadius;
+  const pillY = position.y;
+  const pillWidth = totalWidth - pinRadius;
+
+  context.beginPath();
+  context.roundRect(pillX, pillY, pillWidth, pillHeight, pillHeight / 2);
+  context.fillStyle = "#0F172A";
+  context.fill();
+  context.strokeStyle = "rgba(255, 255, 255, 0.85)";
+  context.lineWidth = 2;
+  context.stroke();
+
+  context.fillStyle = "#FFFFFF";
+  context.textBaseline = "middle";
+  context.fillText(
+    labelText,
+    pillX + pinRadius + fontSize * 0.45,
+    pillY + pillHeight / 2,
+  );
+
+  // Pin circular con anillo exterior de luz
+  const pinCenterX = position.x + pinRadius;
+  const pinCenterY = position.y + pillHeight / 2;
+
+  context.beginPath();
+  context.arc(pinCenterX, pinCenterY, pinRadius + 3, 0, Math.PI * 2);
+  context.fillStyle = "rgba(255, 255, 255, 0.35)";
+  context.fill();
+
+  context.beginPath();
+  context.arc(pinCenterX, pinCenterY, pinRadius, 0, Math.PI * 2);
   context.fillStyle = colors.stroke;
-  context.fillRect(position.x, position.y, labelWidth, labelHeight);
+  context.fill();
+  context.strokeStyle = "#FFFFFF";
+  context.lineWidth = 2.5;
+  context.stroke();
 
   context.fillStyle = ANNOTATION_LABEL_TEXT_COLOR;
+  context.font = `700 ${fontSize}px ${LABEL_FONT_FAMILY}`;
+  context.textAlign = "center";
   context.textBaseline = "middle";
-  context.fillText(text, position.x + padding, position.y + labelHeight / 2);
+  context.fillText(String(annotation.index), pinCenterX, pinCenterY);
+  context.restore();
 }
 
-/**
- * Pinta una anotación completa en capas, de abajo hacia arriba:
- * relleno -> borde -> esquinas -> etiqueta.
- * La etiqueta va al final para que ningún trazo la tape.
- */
 function drawAnnotation(
   context: CanvasRenderingContext2D,
   annotation: FaultAnnotation,
@@ -178,27 +140,13 @@ function drawAnnotation(
 ): void {
   const colors = SEVERITY_PALETTE[annotation.severity];
   const rect = toPixelRect(annotation.box, imageWidth, imageHeight);
-  const lineWidth = computeStrokeWidth(imageWidth, imageHeight);
+  const lineWidth = Math.max(2, computeStrokeWidth(imageWidth, imageHeight) - 1);
 
-  drawBoxFill(context, rect, colors);
-  drawBoxStroke(context, rect, colors, lineWidth);
-  drawCornerBrackets(context, rect, colors, lineWidth);
-  drawLabelPill(context, annotation, rect, colors, imageWidth, imageHeight);
+  drawSubtleRoundedRegion(context, rect, colors, lineWidth);
+  drawNumberedPinAndLabel(context, annotation, rect, colors, imageWidth, imageHeight);
 }
 
-/**
- * Implementación de `ImageAnnotatorPort` basada en HTML5 canvas.
- * Solo funciona en el navegador (usa `Image` y `document`).
- */
 export class CanvasImageAnnotatorService implements ImageAnnotatorPort {
-  /**
-   * Devuelve una copia PNG de la imagen con los recuadros pintados.
-   * No modifica la imagen original ni el arreglo `annotations`.
-   *
-   * @param imageSource Data URL (o URL) de la imagen original.
-   * @param annotations Hallazgos con coordenadas normalizadas [0, 1000].
-   * @returns Data URL `image/png` a la resolución nativa de la imagen.
-   */
   async renderAnnotatedImage(
     imageSource: string,
     annotations: FaultAnnotation[],
@@ -210,7 +158,6 @@ export class CanvasImageAnnotatorService implements ImageAnnotatorPort {
 
     context.drawImage(image, 0, 0, width, height);
 
-    // HIGH se pinta al final para que quede por encima de las demás.
     const ordered = [...annotations].sort(compareBySeverity);
     for (const annotation of ordered) {
       drawAnnotation(context, annotation, width, height);

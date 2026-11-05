@@ -5,6 +5,8 @@
 
 export type RiskLevel = "LOW" | "MEDIUM" | "HIGH";
 
+export type VisionEngine = "gemini" | "mock";
+
 export type SupportedImageMimeType = "image/jpeg" | "image/png" | "image/webp";
 
 /** Coordenadas normalizadas en escala [0, 1000], independientes de la resolución. */

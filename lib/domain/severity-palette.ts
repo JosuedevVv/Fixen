@@ -1,6 +1,6 @@
 /**
- * Paleta semántica de severidad para recuadros (Spec 03, sección 3).
- * Fuente única de colores para el canvas y, más adelante, la UI.
+ * Paleta de marcadores sobre la imagen con el patrón de inversión monocromático (#0F172A)
+ * y matiz sutil para riesgo crítico (Spec 03).
  */
 
 import type { RiskLevel } from "../contracts/diagnosis.contract";
@@ -11,10 +11,10 @@ export interface SeverityColors {
 }
 
 export const SEVERITY_PALETTE: Readonly<Record<RiskLevel, SeverityColors>> = {
-  LOW: { stroke: "#10B981", fill: "rgba(16, 185, 129, 0.14)" },
-  MEDIUM: { stroke: "#F59E0B", fill: "rgba(245, 158, 11, 0.16)" },
-  HIGH: { stroke: "#EF4444", fill: "rgba(239, 68, 68, 0.22)" },
+  LOW: { stroke: "#0F172A", fill: "rgba(15, 23, 42, 0.08)" },
+  MEDIUM: { stroke: "#0F172A", fill: "rgba(15, 23, 42, 0.10)" },
+  HIGH: { stroke: "#DC2626", fill: "rgba(220, 38, 38, 0.12)" },
 };
 
-export const ANNOTATION_OUTLINE_COLOR = "rgba(9, 13, 22, 0.65)";
-export const ANNOTATION_LABEL_TEXT_COLOR = "#0B0F17";
+export const ANNOTATION_OUTLINE_COLOR = "rgba(255, 255, 255, 0.95)";
+export const ANNOTATION_LABEL_TEXT_COLOR = "#FFFFFF";
